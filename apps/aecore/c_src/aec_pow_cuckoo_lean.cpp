@@ -1,6 +1,7 @@
 //-------------------------------------------------------------------
 // Copyright (C) 2017, Aeternity Anstalt
-// Based on Cuckoo Cycle of John Tromp, a memory-hard proof-of-work
+// Based on Cuckoo Cycle of John Tromp, a memory-hard proof-of-work:
+// https://github.com/tromp/cuckoo
 //-------------------------------------------------------------------
 
 #include <inttypes.h> // for SCNx64 macro
@@ -10,7 +11,7 @@
 #include <assert.h>
 #include <string.h>
 #include "siphash.h"
-#include "cuckoo_miner.hpp"
+#include "lean_miner.hpp"
 
 
 #define MAXSOLS 1
@@ -19,9 +20,9 @@
 
 int aec_printf(const char *format, ...);
 
-node_t* generate_single(char* header, int nonce, int ntrims, int nthreads) {
-  aec_printf("Looking for %d-cycle on cuckoo%d(\"%s\",%d) with 50%% edges, %d trims, %d threads\n",
-             PROOFSIZE, EDGEBITS + 1, header, nonce, ntrims, nthreads);
+node_t* generate(u64 key0, u64 key1, int ntrims, int nthreads) {
+  aec_printf("Looking for %d-cycle on cuckoo%d with 50%% edges, %d trims, %d threads\n",
+             PROOFSIZE, EDGEBITS + 1, ntrims, nthreads);
 
   u64 edgeBytes = NEDGES/8, nodeBytes = TWICE_ATOMS*sizeof(atwice);
   int edgeUnit, nodeUnit;
@@ -36,8 +37,9 @@ node_t* generate_single(char* header, int nonce, int ntrims, int nthreads) {
   assert(threads);
   cuckoo_ctx ctx(nthreads, ntrims, MAXSOLS);
 
-  // Initiate context using header and nonce
-  ctx.setheadernonce(header, sizeof(header), nonce);
+  // Set keys in context
+  ctx.sip_keys.k0 = key0;
+  ctx.sip_keys.k1 = key1;
   aec_printf("k0 %llx k1 %llx\n", ctx.sip_keys.k0, ctx.sip_keys.k1);
 
   // Spawn threads with this context
@@ -58,17 +60,17 @@ node_t* generate_single(char* header, int nonce, int ntrims, int nthreads) {
 
   // Look for solutions
   if (ctx.nsols == 0) {
-    aec_printf("No solution found for nonce %d\n", nonce);
+    aec_printf("No solution found\n");
 
     // Failed to find a solution
     free(threads);
     return NULL;
   }
   else {
-    aec_printf("%d solutions found for nonce %d\n", ctx.nsols, nonce);
+    aec_printf("%d solutions found\n", ctx.nsols);
 
     // Return struct
-#ifdef DEBUG    
+#ifdef DEBUG
     for (unsigned s = 0; s < ctx.nsols; s++) {
       for (int i = 0; i < PROOFSIZE; i++) {
         printf(" %jx", (uintmax_t)ctx.sols[s][i]);
@@ -86,10 +88,11 @@ node_t* generate_single(char* header, int nonce, int ntrims, int nthreads) {
   }
 }
 
-int verify(char* header, int nonce, node_t soln[PROOFSIZE]) {
-  // Initiate a context using header and nonce, we just need the keys
+int verify(u64 key0, u64 key1, node_t soln[PROOFSIZE]) {
+  // Initiate a context with keys
   cuckoo_ctx ctx(1, 1, 1);
-  ctx.setheadernonce(header, sizeof(header), nonce);
+  ctx.sip_keys.k0 = key0;
+  ctx.sip_keys.k1 = key1;
   printf("k0 %llx k1 %llx\n", ctx.sip_keys.k0, ctx.sip_keys.k1);
 
   edge_t nonces[PROOFSIZE];

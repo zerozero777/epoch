@@ -12,12 +12,9 @@
 #include <erl_nif.h>
 #include "cuckoo_base.h"
 
-// arbitrary length of header hashed into siphash key
-#define HEADERLEN 80
 
-
-extern node_t* generate_single(char* header, int nonce, int ntrims, int nthreads);
-extern int verify(char* header, int nonce, node_t soln[PROOFSIZE]);
+extern node_t* generate(u64 key0, u64 key1, int ntrims, int nthreads);
+extern int verify(u64 key0, u64 key1, node_t soln[PROOFSIZE]);
 
 int read_solution(ErlNifEnv* env, const ERL_NIF_TERM e_soln, node_t soln[PROOFSIZE]);
 int get_uint64(ErlNifEnv* env, const ERL_NIF_TERM from, uint64_t* to);
@@ -29,18 +26,18 @@ int get_uint64(ErlNifEnv* env, const ERL_NIF_TERM from, uint64_t* to);
 
 static ERL_NIF_TERM generate_single_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-  int nonce, ntrims, nthreads;
-  char header[HEADERLEN];
+  u64 key0, key1;
+  int ntrims, nthreads;
 
   // decode args
   if (argc != 4 ||
-      enif_get_string(env, argv[0], header, HEADERLEN, ERL_NIF_LATIN1) <= 0 ||
-      !enif_get_int(env, argv[1], &nonce) ||
+      !enif_get_uint64(env, argv[0], &key0) ||
+      !enif_get_uint64(env, argv[1], &key1) ||
       !enif_get_int(env, argv[2], &ntrims) ||
       !enif_get_int(env, argv[3], &nthreads))
     return enif_make_badarg(env);
 
-  node_t* result = generate_single(header, nonce, ntrims, nthreads);
+  node_t* result = generate(key0, key1, ntrims, nthreads);
 
   if (result) {
     // success: encode result
@@ -56,7 +53,7 @@ static ERL_NIF_TERM generate_single_nif(ErlNifEnv* env, int argc, const ERL_NIF_
 
     delete[] result;
 
-    // solution found: return {ok, Key1, Key2, Solution}
+    // solution found: return {ok, Solution}
     return enif_make_tuple2(env, enif_make_atom(env, "ok"), e_soln);
   } else {
     // failed to find solution, return {error, no_solutions}
@@ -67,18 +64,18 @@ static ERL_NIF_TERM generate_single_nif(ErlNifEnv* env, int argc, const ERL_NIF_
   }
 }
 
-static ERL_NIF_TERM verify_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
-  int nonce;
-  char header[HEADERLEN];
+static ERL_NIF_TERM verify_proof_c_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+  u64 key0, key1;
   node_t soln[PROOFSIZE];
 
+  // decode args
   if (argc != 3 ||
-      enif_get_string(env, argv[0], header, HEADERLEN, ERL_NIF_LATIN1) <= 0 ||
-      !enif_get_int(env, argv[1], &nonce) ||
+      !enif_get_uint64(env, argv[0], &key0) ||
+      !enif_get_uint64(env, argv[1], &key1) ||
       !read_solution(env, argv[2], soln))
     return enif_make_badarg(env);
 
-  int result = verify(header, nonce, soln);
+  int result = verify(key0, key1, soln);
 
   if (result != 0)
     return enif_make_atom(env, "true");
@@ -91,10 +88,16 @@ static ERL_NIF_TERM get_node_size_nif(ErlNifEnv* env, int argc, const ERL_NIF_TE
   return enif_make_int(env, size);
 }
 
+static ERL_NIF_TERM get_edge_mask_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+  int emask = EDGEMASK;
+  return enif_make_int(env, emask);
+}
+
 static ErlNifFunc nif_funcs[] = {
   {"generate_single", 4, generate_single_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-  {"verify",          3, verify_nif,          0},
-  {"get_node_size",   0, get_node_size_nif,   0}
+  {"verify_proof_c",  3, verify_proof_c_nif,  0},
+  {"get_node_size",   0, get_node_size_nif,   0},
+  {"get_edge_mask",   0, get_edge_mask_nif,   0}
 };
 
 ERL_NIF_INIT(aec_pow_cuckoo, nif_funcs, NULL, NULL, NULL, NULL);

@@ -1,19 +1,23 @@
-.PHONY: deps deps_build clean distclean help
+.PHONY: deps deps_build clean distclean help show_config
 
 CURDIR := $(shell pwd)
 BASEDIR := $(abspath $(CURDIR)/..)
 
 PROJECT := aec_pow_cuckoo
 
+BUILD_CFG := build.cfg
 LIBDIR := cuckoo
 
 ERTS_INCLUDE_DIR ?= $(shell erl -noshell -s init stop -eval "io:format(\"~s/erts-~s/include/\", [code:root_dir(), erlang:system_info(version)]).")
 
 C_SRC_DIR = $(CURDIR)
 PRIV_DIR = $(BASEDIR)/priv/
-LIB20_SO ?= $(CURDIR)/../priv/$(PROJECT)20_nif.so
-LIB28_SO ?= $(CURDIR)/../priv/$(PROJECT)28_nif.so
-LIB32_SO ?= $(CURDIR)/../priv/$(PROJECT)32_nif.so
+LIB_MEAN16_SO ?= $(CURDIR)/../priv/$(PROJECT)_mean16_nif.so
+LIB_LEAN16_SO ?= $(CURDIR)/../priv/$(PROJECT)_lean16_nif.so
+LIB_MEAN29_SO ?= $(CURDIR)/../priv/$(PROJECT)_mean29_nif.so
+LIB_LEAN29_SO ?= $(CURDIR)/../priv/$(PROJECT)_lean29_nif.so
+LIB_SO ?= $(CURDIR)/../priv/$(PROJECT)_nif.so
+TESTLIB_SO ?= $(CURDIR)/../priv/siphash_test_nif.so
 
 # System type and C compiler/flags.
 
@@ -84,7 +88,7 @@ endif
 
 LDFLAGS += -shared
 
-CXXFLAGS += -fPIC -I $(ERTS_INCLUDE_DIR) -I. -I./cuckoo/src -std=c++11 -Wno-format
+CXXFLAGS += -g -fPIC -I $(ERTS_INCLUDE_DIR) -I. -I./cuckoo/src -std=c++11 -Wno-format
 
 # Verbosity.
 
@@ -97,9 +101,6 @@ cpp_verbose = $(cpp_verbose_$(V))
 link_verbose_0 = @echo " LD    " $(@F);
 link_verbose = $(link_verbose_$(V))
 
-OBJECTS20 = aec_pow_cuckoo.20o aec_pow_cuckoo_nif.20o
-OBJECTS28 = aec_pow_cuckoo.28o aec_pow_cuckoo_nif.28o
-OBJECTS32 = aec_pow_cuckoo.32o aec_pow_cuckoo_nif.32o
 CUCKOO_SRCS = $(LIBDIR)/src/blake2b-ref.c
 CUCKOO_OBJECTS = $(LIBDIR)/src/blake2b-ref.o
 
@@ -109,36 +110,74 @@ COMPILE_CPP = $(cpp_verbose) $(CXX) $(CXXFLAGS) $(CPPFLAGS) -c
 help: ## This documentation
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-all: deps $(PRIV_DIR) $(LIB20_SO) $(LIB28_SO) # $(LIB32_SO) ## Build all
+show_config:
+	@echo "==== Using algorithm: $(ALGORITHM), graph size: $(GRAPHSIZE) edge bits: $(EDGEBITS) ===="
 
-$(LIB20_SO): $(OBJECTS20) $(CUCKOO_OBJECTS)
+mean-test: ALGORITHM = mean
+mean-test: GRAPHSIZE = 16
+mean-test: EDGEBITS = 15
+mean-test: deps show_config $(PRIV_DIR) $(LIB_MEAN16_SO) $(TESTLIB_SO)
+
+lean-test: ALGORITHM = lean
+lean-test: GRAPHSIZE = 16
+lean-test: EDGEBITS = 15
+lean-test: deps show_config $(PRIV_DIR) $(LIB_LEAN16_SO)
+
+mean-prod: ALGORITHM = mean
+mean-prod: GRAPHSIZE = 29
+mean-prod: EDGEBITS = 28
+mean-prod: deps show_config $(PRIV_DIR) $(LIB_MEAN29_SO)
+
+lean-prod: ALGORITHM = lean
+lean-prod: GRAPHSIZE = 29
+lean-prod: EDGEBITS = 28
+mean-prod: deps show_config $(PRIV_DIR) $(LIB_LEAN29_SO)
+
+$(LIB_MEAN16_SO): aec_pow_cuckoo_mean16.o aec_pow_cuckoo_nif16.o $(CUCKOO_OBJECTS)
 	$(link_verbose) $(CXX) -o $@ $(LDLIBS)  $(LDFLAGS) $^
+	ln -sf $@ $(LIB_SO)
 
-$(LIB28_SO): $(OBJECTS28) $(CUCKOO_OBJECTS)
+$(LIB_LEAN16_SO): aec_pow_cuckoo_lean16.o aec_pow_cuckoo_nif16.o $(CUCKOO_OBJECTS)
 	$(link_verbose) $(CXX) -o $@ $(LDLIBS)  $(LDFLAGS) $^
+	ln -sf $@ $(LIB_SO)
 
-# $(LIB32_SO): $(OBJECTS32) $(CUCKOO_OBJECTS)
-# 	$(link_verbose) $(CXX) -o $@ $(LDLIBS)  $(LDFLAGS) $^
+$(LIB_MEAN29_SO): aec_pow_cuckoo_mean29.o aec_pow_cuckoo_nif29.o $(CUCKOO_OBJECTS)
+	$(link_verbose) $(CXX) -o $@ $(LDLIBS)  $(LDFLAGS) $^
+	ln -sf $@ $(LIB_SO)
+
+$(LIB_LEAN29_SO): aec_pow_cuckoo_lean29.o aec_pow_cuckoo_nif29.o $(CUCKOO_OBJECTS)
+	$(link_verbose) $(CXX) -o $@ $(LDLIBS)  $(LDFLAGS) $^
+	ln -sf $@ $(LIB_SO)
+
+$(TESTLIB_SO): aec_siphash_test_nif.o $(CUCKOO_OBJECTS)
+	$(link_verbose) $(CXX) -o $@ $(LDLIBS)  $(LDFLAGS) $^
 
 %.o: %.c
 	$(COMPILE_C) $(OUTPUT_OPTION) $<
 
-%.20o: %.cpp
-	$(COMPILE_CPP) -DEDGEBITS=19 $(OUTPUT_OPTION) $<
+%16.o: %.cpp
+	$(COMPILE_CPP) -mavx2 -DXBITS=0 -DNSIPHASH=8 -DEDGEBITS=15 $(OUTPUT_OPTION) $<
 
-%.28o: %.cpp
-	$(COMPILE_CPP) -DEDGEBITS=27 $(OUTPUT_OPTION) $<
+%20.o: %.cpp
+	$(COMPILE_CPP) -mavx2 -DXBITS=2 -DNSIPHASH=8 -DEDGEBITS=19 $(OUTPUT_OPTION) $<
 
-# %.32o: %.cpp
-# 	$(COMPILE_CPP) -DEDGEBITS=31 $(OUTPUT_OPTION) $<
+%25.o: %.cpp
+	$(COMPILE_CPP) -mavx2 -DXBITS=5 -DNSIPHASH=8 -DEDGEBITS=24 $(OUTPUT_OPTION) $<
+
+%28.o: %.cpp
+	$(COMPILE_CPP) -mavx2 -DXBITS=6 -DNSIPHASH=8 -DEDGEBITS=27 $(OUTPUT_OPTION) $<
+
+%29.o: %.cpp
+	$(COMPILE_CPP) -mavx2 -DNSIPHASH=8 -DEDGEBITS=28 $(OUTPUT_OPTION) $<
 
 deps: $(LIBDIR)
 
 $(LIBDIR):
-	git clone https://github.com/aeternity/cuckoo.git
-	( cd $(LIBDIR) && git checkout bded215; )
-	sed $(SED_FLAGS) 's/printf/aec_printf/g' $(LIBDIR)/src/cuckoo_miner.hpp
-	sed $(SED_FLAGS) 's/.*TWICE_PER_ATOM = .*/int aec_printf(const char *format, ...);&/g' $(LIBDIR)/src/cuckoo_miner.hpp
+	git clone https://github.com/tromp/cuckoo.git
+	#https://github.com/aeternity/cuckoo.git
+	( cd $(LIBDIR) && git checkout master; )
+	#sed $(SED_FLAGS) 's/printf/aec_printf/g' $(LIBDIR)/src/cuckoo_miner.hpp
+	#sed $(SED_FLAGS) 's/.*TWICE_PER_ATOM = .*/int aec_printf(const char *format, ...);&/g' $(LIBDIR)/src/cuckoo_miner.hpp
 
 $(PRIV_DIR):
 	mkdir -p $(PRIV_DIR)
@@ -147,8 +186,9 @@ $(CUCKOO_SRCS): $(LIBDIR)
 
 $(CUCKOO_OBJECTS): $(CUCKOO_SRCS)
 
+
 clean: ## Clean all files
-	@rm -f $(OBJECTS20) $(OBJECTS28) $(OBJECTS32) $(LIB_SO)
+	rm -f *.o $(LIB_SO) $(BUILD_CFG)
 
 distclean: clean
-	@rm -fR $(LIBDIR)
+	rm -fR $(LIBDIR)
