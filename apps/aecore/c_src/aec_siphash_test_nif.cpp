@@ -17,6 +17,7 @@
 
 #define HEADERLEN 80
 
+int get_uint64(ErlNifEnv* env, const ERL_NIF_TERM from, uint64_t* to);
 
 ///=============================================================================
 /// API
@@ -26,9 +27,9 @@ static ERL_NIF_TERM reference_hash_nif(ErlNifEnv* env, int argc, const ERL_NIF_T
   u64 k1, k2, nonce;
 
   if (argc != 3 ||
-      !enif_get_uint64(env, argv[0], &k1) ||
-      !enif_get_uint64(env, argv[1], &k2) ||
-      !enif_get_uint64(env, argv[2], &nonce))
+      !get_uint64(env, argv[0], &k1) ||
+      !get_uint64(env, argv[1], &k2) ||
+      !get_uint64(env, argv[2], &nonce))
     return enif_make_badarg(env);
 
   siphash_keys keys;
@@ -45,7 +46,7 @@ static ERL_NIF_TERM reference_set_headernonce_nif(ErlNifEnv* env, int argc, cons
 
     if (argc != 2 ||
         !enif_inspect_binary(env, argv[0], &in) ||
-        !enif_get_uint64(env, argv[1], &nonce))
+        !get_uint64(env, argv[1], &nonce))
     return enif_make_badarg(env);
 
     char headernonce[HEADERLEN];
@@ -97,3 +98,15 @@ static ErlNifFunc nif_funcs[] = {
 };
 
 ERL_NIF_INIT(aec_siphash_tests, nif_funcs, NULL, NULL, NULL, NULL);
+
+// Fix for clang: force cast from u64 (unsigned long long) to unsigned long on
+// 64-bit architectures
+int get_uint64(ErlNifEnv* env, const ERL_NIF_TERM from, uint64_t* to) {
+  int result;
+#if SIZEOF_LONG == 8
+  result = enif_get_ulong(env, from, (unsigned long *)to);
+#else
+  result = enif_get_uint64(env, from, to);
+#endif
+  return result;
+}

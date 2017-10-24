@@ -86,7 +86,7 @@ generate(Data, Nonce, MaxNonce, Target, Trims, Threads, Retries) ->
              Evd :: aec_pow:pow_evidence(), Target :: aec_pow:sci_int()) ->
                     boolean().
 verify(Data, Nonce, Evd, Target) when is_list(Evd) ->
-    Hash = base64:encode_to_string(aec_sha256:hash(Data)),
+    Hash = aec_sha256:hash(Data),
     case test_target(Evd, Target) of
         true ->
             {K1, K2} = aec_siphash:create_keypair(Hash, Nonce),
@@ -212,7 +212,7 @@ verify_proof(K1, K2, Proof) ->
         case Xor0 bor Xor1 of
             0 ->
                 %% follow cycle
-                case follow_cycle(lists:reverse(Uvs), 0, 0, 0, 0) of
+                case follow_cycle(lists:reverse(Uvs)) of
                     ?PROOFSIZE ->
                         true;
                     _ ->
@@ -236,40 +236,49 @@ sipnode2(K1, K2, Proof, UOrV) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
-%%   Take a list of endpoint pairs forming edges (odd/even indices).
-%%   Select the 1st endpoint (I = 0).
-%%     Search (K: even values starting from 2) for matching endpoint value.
-%%       If found, mark it with J.
-%%         Search further. If another match found it is wrong: a branch found.
-%%       If none found: error, dead end
-%%     Now select the pair of the matching endpoint (the point where the edge
-%%     is pointing to: I = J bxor 1) and continue from there.
-%%   A solution is found if we return to the starting node (I = 0 again).
-%%   Count and return the number of edges in the cycle
+%%   Take a list of endpoint pairs forming edges (odd/even indices, u/v).
+%%   Reconstruct and follow edges by searching for matching endpoints.
+%%   Reject branches, dead ends. When reached the origin, return the number
+%%   of edges flollowed for cycle length verification.
 %% @end
 %%------------------------------------------------------------------------------
--spec follow_cycle(list(integer()), integer(), integer(), integer(), integer()) ->
-                          integer().
-follow_cycle(Uvs, I, J, K, CycLength) ->
-    case {(K + 2) rem (2 * ?PROOFSIZE), I} of
+-spec follow_cycle(list(integer())) -> integer().
+follow_cycle([]) ->
+    0;
+follow_cycle(Uvs0) ->
+    Uvs = aeu_zipper_list:new_indexed(Uvs0),
+    follow_cycle(Uvs, Uvs, Uvs, 0).
+
+follow_cycle(Uvs, UvsFound, UvsMatch, CycLength) ->
+    {Uc, I} = aeu_zipper_lists:current(Uvs),
+    {_, J} = aeu_zipper_lists:current(UvsFound),
+    UvsNext = aeu_zipper_lists:next_loop(
+                aeu_zipper_lists:next_loop(UvsMatch)),
+    {Umc, K} = aeu_zipper_list:current(UvsNext),
+    case {K, I} of
         {I, 0} ->
-            %% must cycle back to start or we would have found branch
+            %% cycled back to start: cycle found!
             CycLength;
         {I, J} ->
             %% no matching endpoint
             throw(?POW_DEAD_END);
         {I, _} ->
+            %% Select the pair of the matching endpoint (the point where the edge
+            %% is pointing to/from) and continue following the cycle from there
             INew = J bxor 1,
-            follow_cycle(Uvs, INew, INew, INew, CycLength + 1);
-        {K2, _} ->
-            %% find other edge endpoint identical to one at i
-            case {lists:nth(K, Uvs) =:= lists:uvs(I, Uvs), I} of
-                {true, J} ->
-                    %% already found one before
-                    follow_cycle(Uvs, I, K2, K2, CycLength);
-                {true, _} ->
+            {ok, UvsNew} = aeu_zipper_list:find(INew, UvsFound),
+            follow_cycle(UvsNew, UvsNew, UvsNew, CycLength + 1);
+        _ ->
+            %% find other edge endpoint identical to one at I
+            case {Umc, J} of
+                {Uc, I} ->
+                    %% found first match, remember
+                    follow_cycle(Uvs, UvsNext, UvsNext, CycLength);
+                {Uc, _} ->
+                    %% multiple match as J is not at initial value
                     throw(?POW_BRANCH);
                 _ ->
-                    follow_cycle(Uvs, I, J, K2, CycLength)
+                    %% no match: continue searching
+                    follow_cycle(Uvs, UvsFound, UvsNext, CycLength)
             end
     end.

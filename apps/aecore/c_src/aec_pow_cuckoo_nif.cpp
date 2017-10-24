@@ -31,8 +31,8 @@ static ERL_NIF_TERM generate_single_nif(ErlNifEnv* env, int argc, const ERL_NIF_
 
   // decode args
   if (argc != 4 ||
-      !enif_get_uint64(env, argv[0], &key0) ||
-      !enif_get_uint64(env, argv[1], &key1) ||
+      !get_uint64(env, argv[0], &key0) ||
+      !get_uint64(env, argv[1], &key1) ||
       !enif_get_int(env, argv[2], &ntrims) ||
       !enif_get_int(env, argv[3], &nthreads))
     return enif_make_badarg(env);
@@ -70,8 +70,8 @@ static ERL_NIF_TERM verify_proof_c_nif(ErlNifEnv* env, int argc, const ERL_NIF_T
 
   // decode args
   if (argc != 3 ||
-      !enif_get_uint64(env, argv[0], &key0) ||
-      !enif_get_uint64(env, argv[1], &key1) ||
+      !get_uint64(env, argv[0], &key0) ||
+      !get_uint64(env, argv[1], &key1) ||
       !read_solution(env, argv[2], soln))
     return enif_make_badarg(env);
 
@@ -116,7 +116,7 @@ int read_solution(ErlNifEnv* env, const ERL_NIF_TERM e_soln, node_t c_soln[PROOF
     c_soln[i] = head;
     if (
 #if EDGEBITS > 31
-        !enif_get_uint64(env, head, c_soln + i)
+        !get_uint64(env, head, c_soln + i)
 #else
         !enif_get_uint(env, head, c_soln + i)
 #endif

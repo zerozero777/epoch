@@ -107,6 +107,12 @@ CUCKOO_OBJECTS = $(LIBDIR)/src/blake2b-ref.o
 COMPILE_C = $(c_verbose) $(CC) $(CFLAGS) $(CPPFLAGS) -c
 COMPILE_CPP = $(cpp_verbose) $(CXX) $(CXXFLAGS) $(CPPFLAGS) -c
 
+ALGORITHM = $(shell cat "$(BUILD_CFG)" 2>/dev/null | awk -F': ' '$$1=="alg"{print $$2}')
+GRAPHSIZE = $(shell cat "$(BUILD_CFG)" 2>/dev/null | awk -F': ' '$$1=="graph"{print $$2}')
+EDGEBITS = $(shell expr $(GRAPHSIZE) - 1)
+
+SPEC_OBJECTS = aec_pow_cuckoo_$(ALGORITHM)_$(GRAPHSIZE).o aec_pow_cuckoo_nif_$(GRAPHSIZE).o
+
 help: ## This documentation
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
@@ -185,7 +191,6 @@ $(PRIV_DIR):
 $(CUCKOO_SRCS): $(LIBDIR)
 
 $(CUCKOO_OBJECTS): $(CUCKOO_SRCS)
-
 
 clean: ## Clean all files
 	rm -f *.o $(LIB_SO) $(BUILD_CFG)

@@ -16,9 +16,10 @@
 
 -define(MAX64, 16#ffffffffffffffff).
 
--type hashable() :: integer().
--type siphash_key() :: integer().
--type sip_quadruple() :: {integer(), integer(), integer(), integer()}.%% in fact, uint64
+-type hashable() :: non_neg_integer().
+-type siphash_key() :: non_neg_integer().
+-type sip_quadruple() :: {non_neg_integer(), non_neg_integer(),
+                          non_neg_integer(), non_neg_integer()}.%% in fact, uint64
 
 -export_type([hashable/0,
               siphash_key/0]).
@@ -33,12 +34,11 @@
 %% @end
 %%------------------------------------------------------------------------------
 -spec create_keypair(binary(), integer()) ->
-                            {aec_siphash:siphash_key(), aec_siphash:siphash_key()}.
+                            {siphash_key(), siphash_key()}.
 create_keypair(Header, Nonce) ->
     Header2 =
         case size(Header) of
             Sz when Sz < 76 ->
-                HSz = 8*Sz,
                 ZSz = 8*(76 - Sz),
                 <<Header/binary, 0:ZSz, Nonce:32/little-unsigned-integer>>;
             _ ->
