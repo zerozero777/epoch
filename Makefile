@@ -102,13 +102,13 @@ eunit:
 	@./rebar3 do eunit
 
 venv-present:
-	@virtualenv -q $(PYTHON_DIR)
+	virtualenv -q $(PYTHON_DIR)
 
 python-env: venv-present
-	@. $(PYTHON_BIN)/activate && $(PIP) -q install -r $(PYTHON_DIR)/requirements.txt 
+	. $(PYTHON_BIN)/activate && $(PIP) -q install -r $(PYTHON_DIR)/requirements.txt 
 
 python-tests:
-	@$(NOSE) --nocapture -c $(PYTHON_TESTS)/nose.cfg $(PYTHON_TESTS)
+	$(NOSE) --nocapture -c $(PYTHON_TESTS)/nose.cfg $(PYTHON_TESTS)
 
 python-ws-test:
 	@$(PYTHON) $(PYTHON_TESTS)/ws_client.py --port 3014 --log INFO --handler ws_logic
@@ -126,17 +126,17 @@ python-download-chain:
 	@$(PYTHON) $(PYTHON_TESTS)/chain_downloader.py --host=localhost --port=3013 --export_file=$(PYTHON_TESTS)/integration/data/bchain.txt
 
 swagger: config/swagger.yaml
-	@swagger-codegen generate -i $< -l erlang-server -o $(SWTEMP)
-	@echo "Swagger tempdir: $(SWTEMP)"
-	@cp $(SWTEMP)/priv/swagger.json $(HTTP_APP)/priv/
-	@cp $(SWTEMP)/src/*.erl $(HTTP_APP)/src/swagger
-	@rm -fr $(SWTEMP)
+	swagger-codegen generate -i $< -l erlang-server -o $(SWTEMP)
+	echo "Swagger tempdir: $(SWTEMP)"
+	cp $(SWTEMP)/priv/swagger.json $(HTTP_APP)/priv/
+	cp $(SWTEMP)/src/*.erl $(HTTP_APP)/src/swagger
+	#@rm -fr $(SWTEMP)
 
 swagger-python: config/swagger.yaml
-	@swagger-codegen generate -i $< -l python -o $(SWTEMP)
-	@echo "Swagger python tempdir: $(SWTEMP)"
-	@cp -r $(SWTEMP)/swagger_client $(PYTHON_TESTS)
-	@rm -fr $(SWTEMP)
+	swagger-codegen generate -i $< -l python -o $(SWTEMP)
+	echo "Swagger python tempdir: $(SWTEMP)"
+	cp -r $(SWTEMP)/swagger_client $(PYTHON_TESTS)
+	#@rm -fr $(SWTEMP)
 
 kill:
 	@echo "Kill all beam processes only from this directory tree"

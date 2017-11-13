@@ -29,9 +29,8 @@
 -spec generate(Data :: aec_sha256:hashable(), Target :: aec_pow:sci_int(),
                Nonce :: integer()) -> aec_pow:pow_result().
 generate(Data, Target, Nonce) ->
-    Nonce32 = Nonce band 16#7fffffff,
     Hash1 = aec_sha256:hash(Data),
-    Hash2 = aec_sha256:hash(<<Hash1/binary, Target:16, Nonce32:?HASH_BITS>>),
+    Hash2 = aec_sha256:hash(<<Hash1/binary, Target:16, Nonce:?HASH_BITS>>),
     case aec_pow:test_target(Hash2, Target) of
         true ->
             %% Hash satisfies condition: return nonce

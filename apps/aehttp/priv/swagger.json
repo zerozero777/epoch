@@ -283,7 +283,7 @@
         },
         "nonce" : {
           "type" : "integer",
-          "format" : "int64"
+          "format" : "int32"
         },
         "time" : {
           "type" : "integer",
@@ -332,7 +332,7 @@
         },
         "nonce" : {
           "type" : "integer",
-          "format" : "int64"
+          "format" : "int32"
         },
         "time" : {
           "type" : "integer",
