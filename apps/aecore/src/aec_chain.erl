@@ -157,6 +157,9 @@ common_ancestor(Hash1, Hash2) ->
     gen_server:call(?CHAIN_SERVER,
                     {common_ancestor, Hash1, Hash2}).
 
+%% Document what kind of hash we provide here.
+%% Takes two hashes, the first one later in time than the first one.
+%% Needs extra care when Root is a hash that is off chain, one always goes back to genesis
 get_transactions_between(Hash1, Root) ->
     try get_transactions_between(Hash1, Root, []) of
         Transactions ->
@@ -169,7 +172,7 @@ get_transactions_between(Hash, Hash, Transactions) ->
 get_transactions_between(Hash, Root, Transactions) ->
     case aec_headers:hash_header(aec_block_genesis:genesis_header()) of
         %% Current block is genesis
-        Hash -> Transactions;
+        {ok, Hash} -> Transactions;
         %% Block is not genesis
         _ ->
             case get_block_by_hash(Hash) of
