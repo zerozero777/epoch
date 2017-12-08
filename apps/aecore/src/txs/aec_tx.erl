@@ -1,6 +1,8 @@
 -module(aec_tx).
 
 -export([apply_signed/3,
+         apply_signed_unsafe/3,
+         filter_invalid_txs/1,
          is_coinbase/1,
          signers/1]).
 -export([serialize/1,
@@ -74,7 +76,13 @@ origin(Tx) ->
 -spec apply_signed(list(signed_tx()), trees(), non_neg_integer()) ->
                           {ok, trees()}.
 apply_signed(SignedTxs, Trees0, Height) ->
-    Txs = verify_and_extract_txs(SignedTxs),
+    Txs = filter_invalid_txs(SignedTxs),
+    apply_signed_unsafe(Txs, Trees0, Height).
+
+-spec apply_signed_unsafe(list(signed_tx()), trees(), non_neg_integer()) ->
+                                 {ok, trees()}.
+apply_signed_unsafe(Txs0, Trees0, Height) ->
+    Txs = lists:map(fun aec_tx_sign:data/1, Txs0),
     {Trees1, TotalFee} = apply_txs_and_calculate_total_fee(Txs, Trees0, Height),
     Trees2 = grant_fee_to_miner(Txs, Trees1, Height, TotalFee),
     {ok, Trees2}.
@@ -91,22 +99,21 @@ is_coinbase(Signed) ->
 %%% Internal functions
 %%%=============================================================================
 
--spec verify_and_extract_txs(list(signed_tx())) -> list(tx()).
-verify_and_extract_txs(SignedTxs) ->
-    verify_and_extract_txs(SignedTxs, []).
+-spec filter_invalid_txs(list(signed_tx())) -> list(signed_tx()).
+filter_invalid_txs(SignedTxs) ->
+    filter_invalid_txs(SignedTxs, []).
 
--spec verify_and_extract_txs(list(signed_tx()), list(tx())) -> list(tx()).
-verify_and_extract_txs([], Txs) ->
+-spec filter_invalid_txs(list(signed_tx()), list(signed_tx())) -> list(signed_tx()).
+filter_invalid_txs([], Txs) ->
     lists:reverse(Txs);
-verify_and_extract_txs([SignedTx | Rest], Txs) ->
+filter_invalid_txs([SignedTx | Rest], Txs) ->
     case aec_tx_sign:verify(SignedTx) of
         ok ->
-            Tx = aec_tx_sign:data(SignedTx),
-            verify_and_extract_txs(Rest, [Tx | Txs]);
+            filter_invalid_txs(Rest, [SignedTx | Txs]);
         {error, Reason} ->
             lager:info("Tx ~p verification failed with ~p",
                        [SignedTx, Reason]),
-            verify_and_extract_txs(Rest, Txs)
+            filter_invalid_txs(Rest, Txs)
     end.
 
 -spec apply_txs_and_calculate_total_fee(list(tx()), trees(), height()) ->
