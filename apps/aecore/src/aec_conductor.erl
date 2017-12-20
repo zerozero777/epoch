@@ -512,7 +512,10 @@ preempt_if_new_top(#state{seen_top_block_hash = TopHash} = State, Publish) ->
         TopHash -> no_change;
         TopBlockHash ->
             maybe_publish_top(Publish, TopBlockHash, State),
-            update_tx_pool_on_top_change(TopHash, TopBlockHash, State),
+            {ok, TxsOnOldChain, TxsOnNewChain} =
+                get_transactions_from_common_ancestor(TopHash, TopBlockHash, State),
+            ok = update_tx_pool_on_top_change(TxsOnOldChain, TxsOnNewChain),
+            ok = notify_subscriptions_on_top_change(TxsOnOldChain, TxsOnNewChain),
             State1 = State#state{seen_top_block_hash = TopBlockHash},
             State2 = kill_all_workers_with_tag(mining, State1),
             State3 = kill_all_workers_with_tag(create_block_candidate, State2),
@@ -581,16 +584,22 @@ kill_all_workers_with_tag(Tag, #state{workers = Workers} = State) ->
 %%%===================================================================
 %%% Handling update in transaction pool
 
-update_tx_pool_on_top_change(Hash1, Hash2, State) when is_binary(Hash1),
-                                                       is_binary(Hash2) ->
-    epoch_mining:info("Updating transactions ~p ~p", [Hash1, Hash2]),
+get_transactions_from_common_ancestor(Hash1, Hash2, State) when is_binary(Hash1),
+                                                                is_binary(Hash2) ->
     {ok, Ancestor} = aec_conductor_chain:common_ancestor(Hash1, Hash2, State),
     {ok, TransactionsOnOldChain} =
         aec_conductor_chain:get_transactions_between(Hash1, Ancestor, State),
     {ok, TransactionsOnNewChain} =
         aec_conductor_chain:get_transactions_between(Hash2, Ancestor, State),
-    ok = aec_tx_pool:fork_update(TransactionsOnNewChain, TransactionsOnOldChain),
-    ok.
+    {ok, TransactionsOnOldChain, TransactionsOnNewChain}.
+
+update_tx_pool_on_top_change(TxsOnOldChain, TxsOnNewChain) ->
+    ok = aec_tx_pool:fork_update(TxsOnNewChain, TxsOnOldChain).
+
+notify_subscriptions_on_top_change(TxsOnOldChain, TxsOnNewChain) ->
+    TxsAddedToChain = TxsOnNewChain -- TxsOnOldChain,
+    ok = aeo_subscription:notify_on_new_transactions(TxsAddedToChain).
+
 
 %%%===================================================================
 %%% Worker: Wait for keys to appear

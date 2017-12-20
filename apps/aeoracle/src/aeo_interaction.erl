@@ -12,6 +12,7 @@
         , expires/1
         , fee/1
         , id/1
+        , id/3
         , is_closed/1
         , new/2
         , oracle_address/1
@@ -82,9 +83,15 @@ new(QTx, BlockHeight) ->
 
 -spec id(interaction()) -> id().
 id(I) ->
-    Bin = <<(I#interaction.sender_address):?PUB_SIZE/binary,
-            (I#interaction.sender_nonce):?NONCE_SIZE,
-            (I#interaction.oracle_address):?PUB_SIZE/binary>>,
+    id(I#interaction.sender_address,
+       I#interaction.sender_nonce,
+       I#interaction.oracle_address).
+
+-spec id(binary(), non_neg_integer(), binary()) -> binary().
+id(SenderAddress, Nonce, OracleAddress) ->
+    Bin = <<SenderAddress:?PUB_SIZE/binary,
+            Nonce:?NONCE_SIZE,
+            OracleAddress:?PUB_SIZE/binary>>,
     aec_sha256:hash(Bin).
 
 -spec is_closed(interaction()) -> boolean().

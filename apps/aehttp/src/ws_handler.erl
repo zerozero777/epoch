@@ -1,3 +1,9 @@
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 2017, Aeternity Anstalt
+%%% @doc
+%%% Websocket handler.
+%%% @end
+%%%-------------------------------------------------------------------
 -module(ws_handler).
 
 -behaviour(cowboy_websocket_handler).
@@ -11,24 +17,28 @@
 
 -define(GPROC_KEY, {p, l, {?MODULE, broadcast}}).
 
--define(SUBSCRIBE_EVENTS, [block_created %% node mined a block
+-define(SUBSCRIBE_EVENTS, [ block_created              %% node mined a block
+                          , oracle_query_tx_created    %% oracle query has been submitted to the chain
+                          , oracle_response_tx_created %% oracle response has been submitted to the chain
                           ]).
 
 init({tcp, http}, _Req, _Opts) ->
     {upgrade, protocol, cowboy_websocket}.
 
 websocket_init(_TransportName, Req, _Opts) ->
+    {QsVals, Req1} = cowboy_req:qs_vals(Req),
+    SubscribeEvents = subscribe_events(QsVals),
     case jobs:ask(ws_handlers_queue) of
         {ok, JobId} ->
             gproc:reg(?GPROC_KEY),
             lists:foreach(
-                fun(Event) ->
-                    aec_events:subscribe(Event)
-                end,
-                ?SUBSCRIBE_EVENTS),
-            {ok, Req, JobId};
+              fun(Event) ->
+                      aec_events:subscribe(Event)
+              end,
+              SubscribeEvents),
+            {ok, Req1, JobId};
         {error, rejected} ->
-            {shutdown, Req}
+            {shutdown, Req1}
     end.
 
 websocket_handle({text, MsgBin}, Req, State) ->
@@ -57,12 +67,46 @@ broadcast(SenderName, Action) ->
 broadcast(SenderName, Action, Payload) ->
     try
         gproc:send(?GPROC_KEY, {send, SenderName, Action, Payload})
-    catch error:badarg -> 
-        lager:info("ws_handler broadcasting when there is no client")
+    catch error:badarg ->
+            lager:info("ws_handler broadcasting when there is no client")
     end.
 
 send_msg(WsPid, SenderName, Action, Payload) ->
     WsPid ! {send, SenderName, Action, Payload}.
+
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
+
+subscribe_events(QsVals) ->
+    case proplists:get_value(<<"subscribe_to">>, QsVals, <<"all">>) of
+        <<"all">> ->
+            ?SUBSCRIBE_EVENTS;
+        SubscribeTo ->
+            EventsList = binary:split(SubscribeTo, <<",">>),
+            binary_events_to_codes(EventsList)
+    end.
+
+binary_events_to_codes(BinarySubscribeEvents) ->
+    lists:foldl(
+      fun maybe_include_subscribe_code/2,
+      [], BinarySubscribeEvents).
+
+maybe_include_subscribe_code(BinaryEvent, List) ->
+    try
+        SubscribeEvent = binary_to_existing_atom(BinaryEvent, utf8),
+        case lists:member(SubscribeEvent, ?SUBSCRIBE_EVENTS) of
+            true ->
+                lager:info("Unknown subscribe event ~p", [SubscribeEvent]),
+                [SubscribeEvent | List];
+            false ->
+                List
+        end
+    catch error:badarg ->
+            lager:info("Unknown subscribe event ~p", [BinaryEvent]),
+            List
+    end.
 
 create_message(SenderName, Action, Payload) ->
     MsgWithoutPayload = #{origin => SenderName,
@@ -87,4 +131,19 @@ create_message_from_event(block_created, #{info := Block}) ->
     Payload =
         [{height, BlockHeight},
          {hash, base64:encode(BlockHash)}],
-    create_message(miner, mined_block, Payload).
+    create_message(miner, mined_block, Payload);
+create_message_from_event(oracle_query_tx_created, #{info := OracleQueryTx}) ->
+    Sender = aeo_query_tx:sender(OracleQueryTx),
+    Nonce  = aeo_query_tx:nonce(OracleQueryTx),
+    Oracle = aeo_query_tx:oracle(OracleQueryTx),
+    Payload =
+        [{sender,         base64:encode(Sender)},
+         {interaction_id, base64:encode(aeo_interaction:id(Sender, Nonce, Oracle))}],
+    create_message(node, new_oracle_query, Payload);
+create_message_from_event(oracle_response_tx_created, #{info := OracleResponseTx}) ->
+    %% TODO: Add TTL of the response to payload (needs state trees to do this,
+    %% or TTL being passed in Data map).
+    Payload =
+        [{interaction_id, base64:encode(aeo_response_tx:interaction_id(OracleResponseTx))},
+         {response,       aeo_response_tx:response(OracleResponseTx)}],
+    create_message(node, new_oracle_response, Payload).
