@@ -98,9 +98,9 @@ maybe_include_subscribe_code(BinaryEvent, List) ->
         SubscribeEvent = binary_to_existing_atom(BinaryEvent, utf8),
         case lists:member(SubscribeEvent, ?SUBSCRIBE_EVENTS) of
             true ->
-                lager:info("Unknown subscribe event ~p", [SubscribeEvent]),
                 [SubscribeEvent | List];
             false ->
+                lager:info("Unknown subscribe event ~p", [SubscribeEvent]),
                 List
         end
     catch error:badarg ->
