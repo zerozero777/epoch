@@ -523,19 +523,6 @@ lookup_peer(Uri, #state{peers = Peers}) when is_binary(Uri) ->
             {value, Key, P}
     end.
 
-insert_peers(NewPeers, #state{} = State) ->
-    lists:foldl(
-      fun(P, #state{peers = Ps} = S) ->
-              Uri = uri_of_peer(P), 
-              case is_local_uri(P, S) orelse is_blocked(P, S) orelse lookup_peer(Uri, S) =/= none of
-                  false ->
-                      S#state{peers = enter_peer(P, Ps)};  
-                  true ->
-                      lager:debug("Don't insert peer (~p)", [Uri]),
-                      S
-              end
-      end, State, NewPeers).
-
 is_blocked(Peer, #state{blocked = Blocked}) ->
     Uri = uri_of_peer(Peer),
     lager:debug("Check for blocked ~p in ~p\n", [Uri, Blocked]), 
