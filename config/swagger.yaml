@@ -114,6 +114,10 @@ paths:
           description: The block being found  
           schema:
             $ref: '#/definitions/Block'
+        '400':
+          description: Invalid hash 
+          schema:
+            $ref: '#/definitions/Error'
         '404':
           description: Block not found
           schema:
@@ -161,10 +165,14 @@ paths:
           required: true
           schema:
             $ref: '#/definitions/Tx'
-          responses:
-            '200':
-              description: Successful operation
-          security: []
+      responses:
+        '200':
+          description: Successful operation
+        '400':
+          description: Invalid transaction
+          schema:
+            $ref: '#/definitions/Error'
+      security: []
   /transactions:
     get:
       tags:
@@ -452,6 +460,27 @@ paths:
           description: successful operation
           schema:
             $ref: '#/definitions/AccountsBalances'
+        '403':
+          description: Balances not enabled
+          schema:
+            $ref: '#/definitions/Error'
+      security: []
+  /version:
+    get:
+      tags:
+        - external
+      operationId: GetVersion
+      description: 'Get node''s version'
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      parameters: []
+      responses:
+        '200':
+          description: successful operation
+          schema:
+            $ref: '#/definitions/Version'
       security: []
   /info:
     get:
@@ -469,6 +498,10 @@ paths:
           description: successful operation
           schema:
             $ref: '#/definitions/Info'
+        '403':
+          description: Info not enabled
+          schema:
+            $ref: '#/definitions/Error'
       security: []
 
 definitions:
@@ -701,7 +734,7 @@ definitions:
       balance:
         type: integer
         format: int64
-  Info:
+  Version:
     type: object
     properties:
       version:
@@ -710,6 +743,9 @@ definitions:
         type: string
       genesis_hash:
         type: string
+  Info:
+    type: object
+    properties:
       last_30_blocks_time:
         type: array
         items:
@@ -726,6 +762,8 @@ definitions:
       time_delta_to_parent:
         type: integer
         format: int64
+      difficulty:
+        type: number
 
   Error:
     type: object

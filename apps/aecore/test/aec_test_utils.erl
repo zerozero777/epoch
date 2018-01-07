@@ -36,6 +36,7 @@
         , copy_genesis_dir/2
         , signed_coinbase_tx/0
         , signed_spend_tx/1
+        , fake_start_aehttp/0
         ]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -81,7 +82,7 @@ mock_fast_and_deterministic_cuckoo_pow() ->
     mock_fast_cuckoo_pow({"mean16s-generic", "", 16}).
 
 mock_fast_cuckoo_pow({_MinerBin, _MinerExtraArgs, _NodeBits} = Cfg) ->
-    meck:expect(application, get_env, 3,
+    meck:expect(aeu_env, get_env, 3,
                 fun
                     (aecore, aec_pow_cuckoo, _) ->
                        Cfg;
@@ -275,6 +276,10 @@ create_temp_key_dir() ->
 
 mktempd({unix, _}) ->
     lib:nonl(?cmd("mktemp -d")).
+
+fake_start_aehttp() ->
+    gproc:reg({n,l,{epoch, app, aehttp}}).
+
 
 %%%=============================================================================
 %%% State trees setup

@@ -35,12 +35,22 @@
     post_correct_blocks/1,
     post_broken_blocks/1,
     post_correct_tx/1,
+    post_broken_tx/1,
+    post_broken_base64_tx/1,
 
     % balances
     miner_balance/1,
+    balance_broken_address/1,
     all_accounts_balances/1,
     all_accounts_balances_empty/1,
-    all_accounts_balances_disabled/1
+    all_accounts_balances_disabled/1,
+
+    % infos
+    version/1,
+    info_disabled/1,
+    info_empty/1,
+    info_more_than_30/1,
+    info_less_than_30/1
    ]).
 %%
 %% test case exports
@@ -84,13 +94,22 @@ groups() ->
        post_broken_blocks,
        pending_transactions,
        post_correct_tx,
+       post_broken_tx,
+       post_broken_base64_tx,
   
        % balances
        miner_balance,
+       balance_broken_address,
        all_accounts_balances,
        all_accounts_balances_empty,
-       all_accounts_balances_disabled
+       all_accounts_balances_disabled,
 
+       % infos
+       version,
+       info_empty,
+       info_more_than_30,
+       info_less_than_30,
+       info_disabled
       ]},
      {internal_endpoints, [sequence],
       [
@@ -185,7 +204,7 @@ get_top_empty_chain(_Config) ->
     ok.
 
 get_top_non_empty_chain(_Config) ->
-    ok = aecore_suite_utils:mine_one_block(aecore_suite_utils:node_name(?NODE)),
+    aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE), 1),
     ExpectedH = rpc(aec_conductor, top_header, []), 
     ExpectedMap = header_to_endpoint_top(ExpectedH),
     ct:log("Cleaned top header = ~p", [ExpectedMap]),
@@ -242,12 +261,8 @@ block_not_found_by_broken_hash(_Config) ->
     NumberOfChecks = 10,
     lists:foreach(
         fun(_) ->
-            H =
-                lists:map(
-                    fun(_) -> rand:uniform(26) + 96 end,
-                    lists:seq(1, 32)),
-            Hash = list_to_binary(H),
-            {ok, 404, #{<<"reason">> := <<"Block not found">>}} = get_block_by_hash(Hash)
+            <<_, BrokenHash/binary>> = base64:encode(random_hash()),
+            {ok, 400, #{<<"reason">> := <<"Invalid hash">>}} = get_block_by_hash(BrokenHash)
         end,
         lists:seq(1, NumberOfChecks)), % number
     ok.
@@ -315,16 +330,14 @@ pending_transactions(_Config) ->
                   get_balance(base64:encode(ReceiverPubKey)),
 
 
-    % Currently aec_conductor:start fails to mine a new block;
-    % investigate this issue and uncomment the following lines
-    %ok = aecore_suite_utils:mine_one_block(aecore_suite_utils:node_name(?NODE)),
-    %{ok, []} = rpc(aec_tx_pool, peek, [infinity]), % empty again
-    %{ok, 200, []} = get_transactions(), 
+    aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE), 1),
+    {ok, []} = rpc(aec_tx_pool, peek, [infinity]), % empty again
+    {ok, 200, []} = get_transactions(), 
 
-    %{ok, 200, #{<<"balance">> := Bal1}} = get_balance(),  
-    %Bal1 = Bal0 + MineReward + Fee - AmountToSpent - Fee,
-    %{ok, 200, #{<<"balance">> := AmountToSpent}} = 
-    %             get_balance(base64:encode(ReceiverPubKey)),
+    {ok, 200, #{<<"balance">> := Bal1}} = get_balance(),  
+    Bal1 = Bal0 + MineReward + Fee - AmountToSpent - Fee,
+    {ok, 200, #{<<"balance">> := AmountToSpent}} = 
+                 get_balance(base64:encode(ReceiverPubKey)),
 
     ok.
 
@@ -401,12 +414,7 @@ post_correct_tx(_Config) ->
     Amount = 7,
     Fee = 2,
     BlocksToMine = 10,
-    aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE),
-                                   BlocksToMine),
-    {ok, []} = rpc(aec_tx_pool, peek, [infinity]), % empty 
-    {ok, 200, _} = get_balance(), % account present
-    {ok, PubKey} = rpc(aec_keys, pubkey, []),
-    {ok, Nonce} = rpc(aec_next_nonce, pick_for_account, [PubKey]),
+    {PubKey, Nonce} = prepare_for_spending(BlocksToMine),
     {ok, SpendTx} =
         aec_spend_tx:new(
           #{sender => PubKey,
@@ -415,11 +423,66 @@ post_correct_tx(_Config) ->
             fee => Fee,
             nonce => Nonce}),
     {ok, SignedTx} = rpc(aec_keys, sign, [SpendTx]),
-    post_tx(SignedTx),
+    {ok, 200, _} = post_tx(base64:encode(aec_tx_sign:serialize_to_binary(SignedTx))),
     {ok, [SignedTx]} = rpc(aec_tx_pool, peek, [infinity]), % same tx 
     ok.
 
-%% TODO: POST broken tx (currently not handled in API Endpoint)
+post_broken_tx(_Config) ->
+    Amount = 7,
+    Fee = 2,
+    BlocksToMine = 10,
+    {PubKey, Nonce} = prepare_for_spending(BlocksToMine),
+    {ok, SpendTx} =
+        aec_spend_tx:new(
+          #{sender => PubKey,
+            recipient => random_hash(),
+            amount => Amount,
+            fee => Fee,
+            nonce => Nonce}),
+    {ok, SignedTx} = rpc(aec_keys, sign, [SpendTx]),
+    [T, V, SerializedTx, Sigs] = aec_tx_sign:serialize(SignedTx),
+    lists:foreach(
+        fun(Key) ->
+            BrokenTx = lists:filter(
+                fun(#{Key := _}) -> true;
+                (_) -> false
+                end,
+                SerializedTx),
+            EncodedBrokenTx = base64:encode(msgpack:pack([T, V, BrokenTx, Sigs])),
+            {ok, 400, #{<<"reason">> := <<"Invalid tx">>}} = post_tx(EncodedBrokenTx)
+        end,
+        [<<"type">>,
+         <<"vsn">>,
+         <<"sender">>,
+         <<"recipient">>,
+         <<"amount">>,
+         <<"fee">>,
+         <<"nonce">>]),
+
+    ok.
+
+post_broken_base64_tx(_Config) ->
+    Amount = 7,
+    Fee = 2,
+    BlocksToMine = 10,
+    {PubKey, Nonce} = prepare_for_spending(BlocksToMine),
+    NumberOfChecks = 10,
+    lists:foreach(
+        fun(_) ->
+            {ok, SpendTx} =
+                aec_spend_tx:new(
+                  #{sender => PubKey,
+                    recipient => random_hash(),
+                    amount => Amount,
+                    fee => Fee,
+                    nonce => Nonce}),
+            {ok, SignedTx} = rpc(aec_keys, sign, [SpendTx]),
+            <<_, BrokenHash/binary>> =
+                base64:encode(aec_tx_sign:serialize_to_binary(SignedTx)),
+            {ok, 400, #{<<"reason">> := <<"Invalid base64 encoding">>}} = post_tx(BrokenHash)
+        end,
+        lists:seq(1, NumberOfChecks)), % number
+    ok.
 
 %% changing of another account's balance is checked in pending_transactions test
 miner_balance(_Config) ->
@@ -433,16 +496,42 @@ miner_balance(_Config) ->
     {ok, 200, #{<<"balance">> := Bal}} = get_balance(base64:encode(PubKey)),
     ok.
 
+balance_broken_address(_Config) ->
+    NumberOfChecks = 10,
+    lists:foreach(
+        fun(_) ->
+            <<_, BrokenHash/binary>> = base64:encode(random_hash()),
+            {ok, 400, #{<<"reason">> := <<"Invalid address">>}} = get_balance(BrokenHash)
+        end,
+        lists:seq(1, NumberOfChecks)), % number
+    ok.
+
 all_accounts_balances(_Config) ->
     rpc(application, set_env, [aehttp, enable_debug_endpoints, true]),
     GenesisAccounts = rpc(aec_genesis_block_settings, preset_accounts, []),
     BlocksToMine = 10,
+    Receivers = 10,
+    Fee = 1,
     aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE),
                                    BlocksToMine),
+    ReceiversAccounts = [{random_hash(), Idx} || Idx <- lists:seq(1, Receivers)],
+    lists:foreach(
+        fun({ReceiverPubKey, AmountToSpent}) ->
+            {ok, 200, _} = post_spend_tx(ReceiverPubKey, AmountToSpent, Fee)
+        end,
+        ReceiversAccounts),
+
+    % mine a block to include the txs
+    {ok, [Block]} = aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE), 1),
     {ok, 200, #{<<"accounts_balances">> := Balances}} = get_all_accounts_balances(),
     {ok, MinerPubKey} = rpc(aec_keys, pubkey, []),
     {ok, MinerBal} = rpc(aec_mining, get_miner_account_balance, []),
-    ExpectedBalances = [{MinerPubKey, MinerBal} | GenesisAccounts],
+    ExpectedBalances = [{MinerPubKey, MinerBal} | GenesisAccounts] ++  ReceiversAccounts,
+
+    % make sure all spend txs are part of the block
+    AllTxs = aec_blocks:txs(Block),
+    AllTxsCnt = length(AllTxs),
+    AllTxsCnt = Receivers + 1, % all spendTxs and a coinbaseTx
 
     true = length(Balances) =:= length(ExpectedBalances),
     true =
@@ -451,8 +540,6 @@ all_accounts_balances(_Config) ->
                 Account = {base64:decode(PKEncoded), Bal},
                 lists:member(Account, ExpectedBalances) end,
             Balances),
-    %% TODO: after fixing the aec_conductor mining issue, spend some txs
-    %% and check all accounts
     ok.
 
 all_accounts_balances_empty(_Config) ->
@@ -470,10 +557,74 @@ all_accounts_balances_empty(_Config) ->
 
 all_accounts_balances_disabled(_Config) ->
     rpc(application, set_env, [aehttp, enable_debug_endpoints, false]),
-    {ok, 404, _} = get_all_accounts_balances(),
+    {ok, 403, #{<<"reason">> := <<"Balances not enabled">>}} = get_all_accounts_balances(),
     ok.
 
-%% TODO: GetInfo: should it be disabled?
+version(_Config) ->
+    {ok, 200, #{<<"version">> := V,
+                <<"revision">> := Rev,
+                <<"genesis_hash">> := EncodedGH}} = get_version(),
+    V0 = rpc(aeu_info, get_version, []),
+    Rev0 = rpc(aeu_info, get_revision, []),
+    GenHash0 = rpc(aec_conductor, genesis_hash, []),
+    % asserts
+    V = V0,
+    Rev = Rev0,
+    GenHash0 = base64:decode(EncodedGH),
+    ok.
+
+info_disabled(_Config) ->
+    rpc(application, set_env, [aehttp, enable_debug_endpoints, false]),
+    {ok, 403, #{<<"reason">> := <<"Info not enabled">>}} = get_info(),
+    ok.
+
+info_empty(_Config) ->
+    rpc(application, set_env, [aehttp, enable_debug_endpoints, true]),
+    ExpectedEmpty = #{<<"last_30_blocks_time">> => [ #{<<"difficulty">> => 1.0,
+                                                       <<"height">> => 0,
+                                                       <<"time">>  => 0}]},
+    {ok, 200, ExpectedEmpty} = get_info(),
+    ok.
+
+info_more_than_30(_Config) ->
+    test_info(40).
+
+info_less_than_30(_Config) ->
+    test_info(20).
+
+test_info(BlocksToMine) ->
+    rpc(application, set_env, [aecore, expected_mine_rate, 100]),
+    aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE),
+                                   BlocksToMine),
+    {ok, 200, #{<<"last_30_blocks_time">> := Summary}} = get_info(),
+    ExpectedCnt = min(BlocksToMine + 1, 30),
+    ExpectedCnt = length(Summary),
+    lists:foldl(
+        fun(BlockSummary, 0) ->
+            #{<<"difficulty">> := 1.0,
+              <<"height">> := 0,
+              <<"time">>  := 0} = BlockSummary;
+        (BlockSummary, ExpectedHeight) ->
+            #{<<"height">> := ExpectedHeight} = BlockSummary,
+            {ok, 200, BlockMap} = get_block_by_height(ExpectedHeight),
+            #{<<"time">> := Time, <<"target">> := Target} = BlockMap,
+            #{<<"time">> := Time} = BlockSummary,
+            Difficulty = aec_pow:target_to_difficulty(Target),
+            #{<<"difficulty">> := Difficulty} = BlockSummary,
+            {ok, 200, PreviousBlockMap} = get_block_by_height(ExpectedHeight -1),
+            #{<<"time">> := PrevTime} = PreviousBlockMap,
+            TimeDelta = Time - PrevTime,
+            #{<<"time_delta_to_parent">> := TimeDelta} = BlockSummary,
+            ExpectedHeight -1
+        end,
+        BlocksToMine,
+        Summary),
+
+    ok.
+
+
+
+    
 
 %% possitive test of spend_tx is handled in pending_transactions test
 broken_spend_tx(_Config) ->
@@ -531,9 +682,8 @@ post_block(Block) ->
     BlockMap = aec_blocks:serialize_to_map(Block),
     http_request(Host, post, "block", BlockMap).
 
-post_tx(SignedTx) ->
+post_tx(TxSerialized) ->
     Host = external_address(),
-    TxSerialized = base64:encode(aec_tx_sign:serialize_to_binary(SignedTx)),
     http_request(Host, post, "tx", #{tx => TxSerialized}).
 
 get_all_accounts_balances() ->
@@ -543,6 +693,14 @@ get_all_accounts_balances() ->
 get_miner_pub_key() ->
     Host = internal_address(),
     http_request(Host, get, "account/pub-key", []).
+
+get_version() ->
+    Host = external_address(),
+    http_request(Host, get, "version", []).
+
+get_info() ->
+    Host = external_address(),
+    http_request(Host, get, "info", []).
 
 %% ============================================================
 %% private functions
@@ -651,8 +809,8 @@ unique_peer() ->
             lists:seq(1, 4)),
     IP = string:join(IPsegments, "."),
     Port = integer_to_list(rand:uniform(65535)),
-    list_to_binary(IP ++ ":" ++ Port).
-
+    Unique = list_to_binary(IP ++ ":" ++ Port),
+    <<"http://", Unique/binary >>.
 
 random_hash() ->
     HList =
@@ -660,3 +818,13 @@ random_hash() ->
             fun(_) -> rand:uniform(255) end,
             lists:seq(1, 32)),
     list_to_binary(HList).
+
+prepare_for_spending(BlocksToMine) ->
+    aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE),
+                                   BlocksToMine),
+    {ok, []} = rpc(aec_tx_pool, peek, [infinity]), % empty 
+    {ok, 200, _} = get_balance(), % account present
+    {ok, PubKey} = rpc(aec_keys, pubkey, []),
+    {ok, Nonce} = rpc(aec_next_nonce, pick_for_account, [PubKey]),
+    {PubKey, Nonce}.
+

@@ -48,26 +48,30 @@ handle_request('GetBlockByHeight', Req, _Context) ->
 
 handle_request('GetBlockByHash' = _Method, Req, _Context) ->
     lager:debug("got ~p; Req = ~p", [_Method, pp(Req)]),
-    Hash = base64:decode(maps:get('hash', Req)),
-    case aec_conductor:get_header_by_hash(Hash) of
-        {error, header_not_found} ->
-            {404, [], #{reason => <<"Block not found">>}};
-        {ok, Header} ->
-            {ok, HH} = aec_headers:hash_header(Header),
-            case aec_conductor:get_block_by_hash(HH) of
-                {ok, Block} ->
-                    %% swagger generated code expects the Resp to be proplist
-                    %% or map and always runs jsx:encode/1 on it - even if it
-                    %% is already encoded to a binary; that's why we use
-                    %% aec_blocks:serialize_to_map/1 instead of
-                    %% aec_blocks:serialize_for_network/1
-                    lager:debug("Block = ~p", [pp(Block)]),
-                    Resp =
-                      cleanup_genesis(aec_blocks:serialize_to_map(Block)),
-                    lager:debug("Resp = ~p", [pp(Resp)]),
-                    {200, [], Resp};
-                {error, block_not_found} ->
-                    {404, [], #{reason => <<"Block not found">>}}
+    case base64_safe_decode(maps:get('hash', Req)) of
+        {error, not_base64_encoded} ->
+            {400, [], #{reason => <<"Invalid hash">>}};
+        {ok, Hash} ->
+            case aec_conductor:get_header_by_hash(Hash) of
+                {error, header_not_found} ->
+                    {404, [], #{reason => <<"Block not found">>}};
+                {ok, Header} ->
+                    {ok, HH} = aec_headers:hash_header(Header),
+                    case aec_conductor:get_block_by_hash(HH) of
+                        {ok, Block} ->
+                            %% swagger generated code expects the Resp to be proplist
+                            %% or map and always runs jsx:encode/1 on it - even if it
+                            %% is already encoded to a binary; that's why we use
+                            %% aec_blocks:serialize_to_map/1 instead of
+                            %% aec_blocks:serialize_for_network/1
+                            lager:debug("Block = ~p", [pp(Block)]),
+                            Resp =
+                              cleanup_genesis(aec_blocks:serialize_to_map(Block)),
+                            lager:debug("Resp = ~p", [pp(Resp)]),
+                            {200, [], Resp};
+                        {error, block_not_found} ->
+                            {404, [], #{reason => <<"Block not found">>}}
+                    end
             end
     end;
 
@@ -95,29 +99,38 @@ handle_request('PostBlock', Req, _Context) ->
 
 handle_request('PostTx', #{'Tx' := Tx} = Req, _Context) ->
     lager:debug("Got PostTx; Req = ~p", [pp(Req)]),
-    SerializedTx = maps:get(<<"tx">>, Tx),
-    SignedTx = aec_tx_sign:deserialize_from_binary(
-                 base64:decode(SerializedTx)),
-    lager:debug("deserialized: ~p", [pp(SignedTx)]),
-    PushRes = aec_tx_pool:push(SignedTx, tx_received),
-    lager:debug("PushRes = ~p", [pp(PushRes)]),
-    {200, [], #{}};
+    case base64_safe_decode(maps:get(<<"tx">>, Tx)) of
+        {error, not_base64_encoded} ->
+            {400, [], #{reason => <<"Invalid base64 encoding">>}};
+        {ok, DecodedTx} ->
+            DeserializedTx =  
+                try {ok, aec_tx_sign:deserialize_from_binary(DecodedTx)}
+                catch _:_ -> {error, broken_tx}
+                end,
+            case DeserializedTx of
+                {error, broken_tx} ->
+                    {400, [], #{reason => <<"Invalid tx">>}};
+                {ok, SignedTx} ->
+                    lager:debug("deserialized: ~p", [pp(SignedTx)]),
+                    PushRes = aec_tx_pool:push(SignedTx, tx_received),
+                    lager:debug("PushRes = ~p", [pp(PushRes)]),
+                    {200, [], #{}}
+            end
+    end;
 
 handle_request('GetAccountBalance', Req, _Context) ->
-    Pubkey =
+    Decoded =
       case maps:get('pub_key', Req) of
           undefined ->
               {ok, PK} = aec_keys:pubkey(),
-              PK;
+              {ok, PK};
           PK when is_binary(PK) ->
-              try base64:decode(PK)
-              catch _:_ -> not_base64_encoded
-              end
+              base64_safe_decode(PK)
       end,
-    case Pubkey of
-        not_base64_encoded ->
+    case Decoded of
+        {error, not_base64_encoded} ->
             {400, [], #{reason => <<"Invalid address">>}};
-        _ when is_binary(Pubkey) ->
+        {ok, Pubkey} when is_binary(Pubkey) ->
             case aec_conductor:get_account(Pubkey) of
                 {value, A} ->
                     {200, [], #{balance => aec_accounts:balance(A)}};
@@ -140,25 +153,35 @@ handle_request('GetAccountsBalances', _Req, _Context) ->
                   end, [], AccountsBalances),
             {200, [], #{accounts_balances => FormattedAccountsBalances}};
         false ->
-            {404, [], #{}}
+            {403, [], #{reason => <<"Balances not enabled">>}}
     end;
 
-handle_request('GetInfo', _Req, _Context) ->
-    TimeSummary0 = aec_conductor:get_top_30_blocks_time_summary(),
-    TimeSummary =
-        lists:foldl(
-          fun({Height, Ts, Delta}, Acc) ->
-                  [#{height => Height,
-                     time => Ts,
-                     time_delta_to_parent => Delta} | Acc];
-             ({Height, Ts}, Acc) ->
-                  [#{height => Height,
-                     time => Ts} | Acc]
-          end, [], TimeSummary0),
+handle_request('GetVersion', _Req, _Context) ->
     {200, [], #{version => aeu_info:get_version(),
                 revision => aeu_info:get_revision(),
-                genesis_hash => base64:encode(aec_conductor:genesis_hash()),
-                last_30_blocks_time => lists:reverse(TimeSummary)}};
+                genesis_hash => base64:encode(aec_conductor:genesis_hash())}};
+
+handle_request('GetInfo', _Req, _Context) ->
+    case application:get_env(aehttp, enable_debug_endpoints, false) of
+        true ->
+            TimeSummary0 = aec_conductor:get_top_30_blocks_time_summary(),
+            TimeSummary =
+                lists:foldl(
+                  fun({Height, Ts, Delta, Difficulty}, Acc) ->
+                          [#{height => Height,
+                            time => Ts,
+                            difficulty => Difficulty,
+                            time_delta_to_parent => Delta} | Acc];
+                    ({Height, Ts, Difficulty}, Acc) ->
+                          [#{height => Height,
+                            time => Ts,
+                            difficulty => Difficulty} | Acc]
+                  end, [], TimeSummary0),
+            {200, [], #{last_30_blocks_time => lists:reverse(TimeSummary)}};
+        false ->
+            {403, [], #{reason => <<"Info not enabled">>}}
+    end;
+
 
 handle_request(OperationID, Req, Context) ->
     error_logger:error_msg(
@@ -209,34 +232,30 @@ add_missing_to_genesis_block(Val) ->
 handle_ping(#{<<"source">> := Src} = PingObj) ->
     IsBlocked = aec_peers:is_blocked(Src),
     case IsBlocked of
-        false -> handle_ping_(PingObj);
+        false -> handle_ping_(Src, PingObj);
         true  ->
             abort_sync(Src, 403, <<"Not allowed">>)
     end.
 
-handle_ping_(PingObj) ->
+handle_ping_(Source, PingObj) ->
     LocalPingObj = aec_sync:local_ping_object(),
-    case aec_sync:compare_ping_objects(LocalPingObj, PingObj) of
+    case aec_sync:compare_ping_objects(Source, LocalPingObj, PingObj) of
         {error, different_genesis_blocks} ->
-            Source = maps:get(<<"source">>, PingObj),
             aec_peers:block_peer(Source),
             abort_sync(Source, 409, <<"Different genesis blocks">>);
         ok ->
-            Source = maps:get(<<"source">>, PingObj),
             aec_peers:update_last_seen(Source),
             TheirPeers = maps:get(<<"peers">>, PingObj, []),
             aec_peers:add_and_ping_peers(TheirPeers),
-            Ok = LocalPingObj#{<<"pong">> => <<"pong">>},
+            Map = LocalPingObj#{<<"pong">> => <<"pong">>},
             Share = maps:get(<<"share">>, PingObj),
             Res = case mk_num(Share) of
                       N when is_integer(N), N > 0 ->
                           Peers = aec_peers:get_random(N, [Source|TheirPeers]),
-                          PeerUris = [iolist_to_binary(aec_peers:uri(P))
-                                      || P <- Peers],
-                          lager:debug("PeerUris = ~p~n", [PeerUris]),
-                          Ok#{<<"peers">> => PeerUris};
+                          lager:debug("PeerUris = ~p~n", [Peers]),
+                          Map#{<<"peers">> => Peers};
                       _ ->
-                          Ok
+                          Map
                   end,
             {200, [], Res}
     end.
@@ -247,3 +266,8 @@ abort_sync(Uri, Code, Reason) ->
       {sync_aborted, #{uri => Uri,
                        reason => Reason}}),
       {Code, [], #{reason => Reason}}.
+
+base64_safe_decode(K) when is_binary(K) ->
+      try {ok, base64:decode(K)}
+      catch _:_ -> {error, not_base64_encoded}
+      end.

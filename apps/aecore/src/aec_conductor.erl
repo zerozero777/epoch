@@ -253,8 +253,9 @@ init(Options) ->
     TopBlockHash = aec_conductor_chain:get_top_block_hash(State3),
     State4 = State3#state{seen_top_block_hash = TopBlockHash},
     epoch_mining:info("Miner process initilized ~p", [State4]),
-    %% NOTE: The init continues at handle_info(timeout, State).
-    {ok, State4, 0}.
+    %% NOTE: The init continues at handle_info(init_continue, State).
+    self() ! init_continue,
+    {ok, State4}.
 
 handle_call({add_synced_block, Block},_From, State) ->
     {Reply, State1} = handle_synced_block(Block, State),
@@ -292,9 +293,7 @@ handle_call(get_top_header,_From, State) ->
 handle_call(get_top_header_hash,_From, State) ->
     {reply, aec_conductor_chain:get_top_header_hash(State), State};
 handle_call(get_total_difficulty,_From, State) ->
-    Res = aec_conductor_chain:get_total_difficulty(State),
-    aec_metrics:try_update([ae,epoch,aecore,chain,total_difficulty], Res),
-    {reply, Res, State};
+    {reply, aec_conductor_chain:get_total_difficulty(State), State};
 handle_call({has_block, Hash},_From, State) ->
     {reply, aec_conductor_chain:has_block(Hash, State), State};
 handle_call({hash_is_connected_to_genesis, Hash},_From, State) ->
@@ -327,8 +326,8 @@ handle_cast(Other, State) ->
     epoch_mining:error("Received unknown cast: ~p", [Other]),
     {noreply, State}.
 
-handle_info(timeout, State) ->
-    %% Initial timeout
+handle_info(init_continue, State) ->
+    %% Continue the initialization by (possibly) starting the miner
     {noreply, start_mining(State)};
 handle_info({worker_reply, Pid, Res}, State) ->
     State1 = handle_worker_reply(Pid, Res, State),
@@ -458,7 +457,7 @@ spawn_worker(Tag, Fun) ->
 worker_timeout(create_block_candidate) ->
     infinity;
 worker_timeout(mining) ->
-    application:get_env(aecore, mining_attempt_timeout, ?DEFAULT_MINING_ATTEMPT_TIMEOUT);
+    aeu_env:get_env(aecore, mining_attempt_timeout, ?DEFAULT_MINING_ATTEMPT_TIMEOUT);
 worker_timeout(wait_for_keys) ->
     infinity.
 

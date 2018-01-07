@@ -46,6 +46,10 @@ request_params('GetTxs') ->
     [
     ];
 
+request_params('GetVersion') ->
+    [
+    ];
+
 request_params('Ping') ->
     [
         'Ping'
@@ -309,9 +313,13 @@ validate_response('GetAccountBalance', 404, Body, ValidatorState) ->
 
 validate_response('GetAccountsBalances', 200, Body, ValidatorState) ->
     validate_response_body('AccountsBalances', 'AccountsBalances', Body, ValidatorState);
+validate_response('GetAccountsBalances', 403, Body, ValidatorState) ->
+    validate_response_body('Error', 'Error', Body, ValidatorState);
 
 validate_response('GetBlockByHash', 200, Body, ValidatorState) ->
     validate_response_body('Block', 'Block', Body, ValidatorState);
+validate_response('GetBlockByHash', 400, Body, ValidatorState) ->
+    validate_response_body('Error', 'Error', Body, ValidatorState);
 validate_response('GetBlockByHash', 404, Body, ValidatorState) ->
     validate_response_body('Error', 'Error', Body, ValidatorState);
 
@@ -322,12 +330,17 @@ validate_response('GetBlockByHeight', 404, Body, ValidatorState) ->
 
 validate_response('GetInfo', 200, Body, ValidatorState) ->
     validate_response_body('Info', 'Info', Body, ValidatorState);
+validate_response('GetInfo', 403, Body, ValidatorState) ->
+    validate_response_body('Error', 'Error', Body, ValidatorState);
 
 validate_response('GetTop', 200, Body, ValidatorState) ->
     validate_response_body('Top', 'Top', Body, ValidatorState);
 
 validate_response('GetTxs', 200, Body, ValidatorState) ->
     validate_response_body('Transactions', 'Transactions', Body, ValidatorState);
+
+validate_response('GetVersion', 200, Body, ValidatorState) ->
+    validate_response_body('Version', 'Version', Body, ValidatorState);
 
 validate_response('Ping', 200, Body, ValidatorState) ->
     validate_response_body('Ping', 'Ping', Body, ValidatorState);
@@ -341,6 +354,10 @@ validate_response('PostBlock', 200, Body, ValidatorState) ->
 validate_response('PostBlock', 400, Body, ValidatorState) ->
     validate_response_body('Error', 'Error', Body, ValidatorState);
 
+validate_response('PostTx', 200, Body, ValidatorState) ->
+    validate_response_body('', '', Body, ValidatorState);
+validate_response('PostTx', 400, Body, ValidatorState) ->
+    validate_response_body('Error', 'Error', Body, ValidatorState);
 
 
 validate_response('GetActiveRegisteredOracles', 200, Body, ValidatorState) ->

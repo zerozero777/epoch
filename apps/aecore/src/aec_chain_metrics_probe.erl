@@ -30,8 +30,7 @@
 ad_hoc_spec() ->
     [{module, ?MODULE},
      {type, probe},
-     {cache, 5000},
-     {options, [{sample_interval, 5000}]}].
+     {sample_interval, 5000}].
 
 
 

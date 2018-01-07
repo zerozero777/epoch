@@ -77,7 +77,7 @@ genesis_block_with_state(Map) ->
            txs_hash = txs_hash(),
            root_hash = aec_trees:hash(Trees),
            target = ?HIGHEST_TARGET_SCI,
-           txs = [],
+           txs = transactions(),
            pow_evidence = pow(),
            nonce = 0,
            time = 0 %% Epoch.

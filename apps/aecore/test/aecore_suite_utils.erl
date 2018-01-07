@@ -8,12 +8,16 @@
          create_config/4,
          make_multi/1,
          make_multi/2,
-         make_shortcut/1]).
+         make_shortcut/1,
+         shortcut_dir/1]).
+
+-export([cmd/1,
+         cmd_res/1]).
 
 -export([start_node/2,
          stop_node/2,
-         mine_one_block/1,
-         mine_blocks/2]).
+         mine_blocks/2,
+         mine_blocks/3]).
 
 -export([node_tuple/1,
          node_name/1,
@@ -29,7 +33,7 @@
          await_aehttp/1
          ]).
 
-
+-include_lib("kernel/include/file.hrl").
 -include_lib("common_test/include/ct.hrl").
 
 %%%=============================================================================
@@ -93,27 +97,12 @@ stop_node(N, Config) ->
     cmd(["(cd ", node_shortcut(N, Config),
          " && ./bin/epoch stop)"]).
 
-mine_one_block(Node) ->
-    aecore_suite_utils:subscribe(Node, block_created),
-    StartRes = rpc:call(Node, aec_conductor, start_mining, [], 5000),
-    ct:log("aec_conductor:start_mining() (~p) -> ~p", [Node, StartRes]),
-    receive
-        {gproc_ps_event, block_created, Info} ->
-            StopRes = rpc:call(Node, aec_conductor, stop_mining, [], 5000),
-            aecore_suite_utils:unsubscribe(Node, block_created),
-            ct:log("aec_conductor:stop_mining() (~p) -> ~p", [Node, StopRes]),
-            ct:log("block created, Info=~p", [Info]),
-            ok
-    after 30000 ->
-            StopRes = rpc:call(Node, aec_conductor, stop_mining, [], 5000),
-            aecore_suite_utils:unsubscribe(Node, block_created),
-            ct:log("aec_conductor:stop_mining() (~p) -> ~p", [Node, StopRes]),
-            ct:log("timeout waiting for block event~n"
-                   "~p", [process_info(self(), messages)]),
-            error(timeout_waiting_for_block)
-    end.
-
 mine_blocks(Node, NumBlocksToMine) ->
+    mine_blocks(Node, NumBlocksToMine, 100).
+
+mine_blocks(Node, NumBlocksToMine, MiningRate) ->
+    rpc:call(Node, application, set_env, [aecore, expected_mine_rate, MiningRate],
+             5000),
     aecore_suite_utils:subscribe(Node, block_created),
     StartRes = rpc:call(Node, aec_conductor, start_mining, [], 5000),
     ct:log("aec_conductor:start_mining() (~p) -> ~p", [Node, StartRes]),
@@ -122,19 +111,23 @@ mine_blocks(Node, NumBlocksToMine) ->
     ct:log("aec_conductor:stop_mining() (~p) -> ~p", [Node, StopRes]),
     aecore_suite_utils:unsubscribe(Node, block_created),
     case Res of
-        ok ->
-            ok;
+        {ok, _BlocksReverse} = OK ->
+            OK;
         {error, Reason} ->
             erlang:error(Reason)
     end.
 
-mine_blocks_loop(0) ->
-    ok;
-mine_blocks_loop(BlocksToMine) ->
+mine_blocks_loop(Cnt) ->
+    mine_blocks_loop([], Cnt).
+
+mine_blocks_loop(Blocks, 0) ->
+    {ok, Blocks};
+mine_blocks_loop(Blocks, BlocksToMine) ->
     receive
         {gproc_ps_event, block_created, Info} ->
             ct:log("block created, Info=~p", [Info]),
-            mine_blocks_loop(BlocksToMine -1)
+            #{info := Block} = Info,
+            mine_blocks_loop([Block | Blocks], BlocksToMine - 1)
     after 30000 ->
             ct:log("timeout waiting for block event~n"
                   "~p", [process_info(self(), messages)]),
@@ -242,7 +235,47 @@ setup_node(N, Top, Epoch, Config) ->
 
 
 cp_dir(From, To) ->
-    cmd(["cp -r ", From, " ", To]).
+    ToDir = case lists:last(To) of
+		$/ ->
+		    filename:join(To, filename:basename(From));
+		_ ->
+		    To
+	    end,
+    ok = filelib:ensure_dir(filename:join(ToDir, "foo")),
+    cp_dir(file:list_dir(From), From, ToDir).
+
+cp_dir({ok, Fs}, From, To) ->
+    Res =
+	lists:foldl(
+	  fun(F, Acc) ->
+		  FullF = filename:join(From, F),
+		  case filelib:is_dir(FullF) of
+		      true ->
+			  To1 = filename:join(To, F),
+			  cp_dir(FullF, To1),
+			  [FullF|Acc];
+		      false ->
+			  Tgt = filename:join(To, F),
+			  ok = filelib:ensure_dir(Tgt),
+			  {ok,_} = file:copy(FullF, Tgt),
+			  ok = match_mode(FullF, Tgt),
+			  [FullF|Acc]
+		  end
+	  end, [], Fs),
+    ct:log("cp_dir(~p, ~p) -> ~p", [From, To, Res]),
+    ok;
+cp_dir({error, _} = Error, From, To) ->
+    ct:log("cp_dir(~p, ~p) -> ~p", [From, To, Error]),
+    Error.
+
+match_mode(A, B) ->
+    case {file:read_link_info(A), file:read_file_info(B)} of
+	{{ok, #file_info{mode = M}}, {ok, FI}} ->
+	    file:write_file_info(B, FI#file_info{mode = M});
+	Other ->
+	    ct:log("Error matching mode ~p -> ~p: ~p", [A, B, Other]),
+	    {error, {match_mode, {A, B}, Other}}
+    end.
 
 cp_file(From, To) ->
     {ok, _} = file:copy(From, To),

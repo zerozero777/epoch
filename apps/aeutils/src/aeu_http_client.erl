@@ -22,7 +22,7 @@ request(BaseUri, get, Endpoint, Params, Header, HTTPOptions, Options) ->
     R = httpc:request(get, {URL, Header}, HTTPOptions, Options),
     process_http_return(R);
 request(BaseUri, post, Endpoint, Params, Header, HTTPOptions, Options) ->
-    URL = BaseUri ++ Endpoint,
+    URL = binary_to_list(iolist_to_binary([BaseUri, Endpoint])),
     {Type, Body} = case Params of
                        Map when is_map(Map) ->
                            %% JSON-encoded
@@ -32,20 +32,21 @@ request(BaseUri, post, Endpoint, Params, Header, HTTPOptions, Options) ->
                            {"application/x-www-form-urlencoded",
                             http_uri:encode(Endpoint)}  %% is this correct??
                    end,
-    %% lager:debug("Type = ~p; Body = ~p", [Type, Body]),
+    lager:debug("POST URL = ~p Type = ~p; Body = ~p", [URL, Type, Body]),
     R = httpc:request(post, {URL, Header, Type, Body}, HTTPOptions, Options),
     process_http_return(R).
 
 process_http_return(R) ->
     case R of
+        %% if Body == [] an error is thrown!
         {ok, {{_,_ReturnCode, _State}, _Head, Body}} ->
             try
-                %% lager:debug("Body to parse: ~s", [Body]),
                 Result = jsx:decode(iolist_to_binary(Body), [return_maps]),
                 lager:debug("Decoded response: ~p", [Result]),
                 {ok, Result}
             catch
                 error:E ->
+                    lager:error("http response ~p", [R]),
                     {error, {parse_error, [E, erlang:get_stacktrace()]}}
             end;
         {error, _} = Error ->
