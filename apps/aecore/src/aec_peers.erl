@@ -45,7 +45,6 @@
           host              :: http_uri:host(),
           port              :: http_uri:port(),
           path              :: http_uri:path(),
-          blocked = false   :: boolean(),
           last_seen = 0     :: integer(), % Erlang system time (POSIX time)
           last_pings = []   :: [integer()], % Erlang system time
           ping_tref         :: reference() | undefined
@@ -569,9 +568,6 @@ update_errored(ok, Uri, Errored) ->
 update_errored(error, Uri, Errored) ->
     gb_sets:add_element(Uri, Errored).
 
-start_ping_timer(_, #peer{blocked = true} = Peer) ->
-    %% Don't ping blocked peers
-    Peer;
 start_ping_timer(CalcF, Peer) ->
     Uri = uri_of_peer(Peer),
     NewTime = CalcF(Peer),
