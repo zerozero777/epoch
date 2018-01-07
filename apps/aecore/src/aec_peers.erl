@@ -260,7 +260,6 @@ handle_call(all, _From, State) ->
     Uris = [ uri_of_peer(Peer) || Peer <- gb_trees:values(State#state.peers) ],
     {reply, Uris, State};
 handle_call({get_random, N0, Exclude}, _From, #state{peers = Tree0,
-                                                     blocked = Blocked,
                                                      errored = Errored} = State) ->
     %% first, remove all blocked peers
     Tree = exclude_from_set(Errored, Tree0, State),
@@ -330,27 +329,23 @@ handle_cast({add, Peer, Connect}, State0) ->
             lager:debug("Will not add peer ~p", [Uri]),
             {noreply, State0}
     end;
-handle_cast({add_and_ping, PeerRecs}, State) ->
-    lager:debug("add and ping peers ~p", [PeerRecs]),
-    #state{peers = Peers} = State1 = insert_peers(PeerRecs, State),
-    lager:debug("known peers: ~p", [gb_trees:to_list(Peers)]),
-    lists:foreach(
-      fun(P0) ->
-              %% need to fetch the stored peer record to get proper block
-              %% status
-              Uri = uri_of_peer(P0),
-              case lookup_peer(Uri, State1) of
-                  none ->
-                      lager:debug("Couldn't find just added ~p", [Uri]),
-                      ok;
-                  {value, _Key, Peer} ->
-                      case has_been_seen(Peer) of
-                          true -> ok;
-                          false ->
-                              maybe_ping_peer(Peer, State1)
-                      end
+handle_cast({add_and_ping, Peers}, State) ->
+    lager:debug("add and ping peers ~p", [Peers]),
+    State1 = 
+        lists:foldl(
+          fun(P, #state{peers = Ps} = S) ->
+              Uri = uri_of_peer(P), 
+              case is_local_uri(P, S) orelse is_blocked(P, S) orelse lookup_peer(Uri, S) =/= none of
+                  false ->
+                      lager:debug("will ping peer ~p", [Uri]),
+                      aec_sync:schedule_ping(P, fun ping_peer/1),
+                      S#state{peers = enter_peer(P, Ps)};
+                  true ->
+                      lager:debug("Don't insert nor ping peer (~p)", [Uri]),
+                      S
               end
-      end, PeerRecs),
+          end, State, Peers),
+    lager:debug("known peers: ~p", [gb_trees:to_list(State1#state.peers)]),
     {noreply, metrics(State1)};
 handle_cast({block, Peer}, #state{peers = Peers,
                                   blocked = Blocked} = State) ->
