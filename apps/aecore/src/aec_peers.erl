@@ -284,27 +284,24 @@ handle_call({get_random, N0, Exclude}, _From, #state{peers = Tree0,
         end,
     {reply, [ uri_of_peer(P) || P <- Peers ], State}.
 
-handle_cast({update_last_seen, P, Time}, State = #state{peers = Peers}) ->
-    Uri = uri_of_peer(P),
-    case is_local_uri(P, State) of
+handle_cast({update_last_seen, Peer, Time}, State = #state{peers = Peers}) ->
+    Uri = uri_of_peer(Peer),
+    case is_local_uri(Peer, State) orelse is_blocked(Peer, State) of
         false ->
-            {NewPeers, ActualUri} =
+            NewPeer = 
                 case lookup_peer(Uri, State) of
                     none ->
                         %% can happen e.g. at first ping
-                        Peer = start_ping_timer(
-                                 fun set_max_retry/1,
-                                 P),
-                        {enter_peer(Peer#peer{last_seen = Time}, Peers), 
-                         uri_of_peer(Peer)};
-                    {value, _Hash, Peer} ->
-                        Peer1 = start_ping_timer(
-                                  fun set_max_retry/1,
-                                  Peer),
-                        {enter_peer(Peer1#peer{last_seen = Time}, Peers),
-                         uri_of_peer(Peer1)}
+                        start_ping_timer(
+                            fun set_max_retry/1,
+                            Peer);
+                    {value, _Hash, FoundPeer} ->
+                        start_ping_timer(
+                            fun set_max_retry/1,
+                            FoundPeer)
                 end,
-            Errored = update_errored(ok, ActualUri, State#state.errored),
+            NewPeers = enter_peer(NewPeer#peer{last_seen = Time}, Peers),
+            Errored = update_errored(ok, Uri, State#state.errored),
             {noreply, State#state{peers = NewPeers, errored = Errored}};
         true ->
             lager:debug("Ignoring last_seen ~p", [Uri]),
